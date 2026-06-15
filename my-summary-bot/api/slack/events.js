@@ -43,18 +43,14 @@ export default async function handler(req, res) {
     const messageText = body.message?.text || body.message?.blocks?.[0]?.text?.text || "";
 
     if (action?.action_id === "summarize") {
-      res.status(200).end();
       const summary = await summarizeText(messageText);
       await postToThread(channel, thread_ts, `📋 *Summary:*\n${summary}`);
     } else if (action?.action_id === "listen") {
-      res.status(200).end();
       const summary = await summarizeText(messageText);
       const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
       await postToThread(channel, thread_ts, `🔊 *Listen to summary:*\n${listenUrl}`);
-    } else {
-      res.status(200).end();
     }
-    return;
+    return res.status(200).end();
   }
 
   // 4) 새 메시지 이벤트 처리
