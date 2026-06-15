@@ -1,169 +1,50 @@
-// api/slack/events.js
-import crypto from "crypto";
-
-const SLACK_BOT_TOKEN      = process.env.SLACK_BOT_TOKEN;
-const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
-const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
-const BOT_USER_ID          = process.env.BOT_USER_ID;
-const TARGET_CHANNEL       = process.env.TARGET_CHANNEL;
-
-export const config = {
-  api: { bodyParser: false },
-};
-
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end();
-
-  const rawBody = await getRawBody(req);
-
-  // Interactivity(버튼 클릭)는 form-urlencoded로 옴 → payload 파라미터 파싱
-  let body;
-  if (rawBody.startsWith("payload=")) {
-    const decoded = decodeURIComponent(rawBody.slice("payload=".length));
-    body = JSON.parse(decoded);
-  } else {
-    body = JSON.parse(rawBody);
-  }
-
-  // 1) URL 검증
-  if (body.type === "url_verification") {
-    return res.status(200).json({ challenge: body.challenge });
-  }
-
-  // 2) 서명 검증
-  if (!verifySignature(req.headers, rawBody)) {
-    return res.status(403).send("Invalid signature");
-  }
-
-  // 3) 버튼 클릭 (Interactivity) 처리
-  if (body.type === "block_actions") {
-    const action = body.actions?.[0];
-    const channel = body.container?.channel_id;
-    const thread_ts = body.container?.message_ts;
-    const messageText = body.message?.text || body.message?.blocks?.[0]?.text?.text || "";
-
-    if (action?.action_id === "summarize") {
-      res.status(200).end();
-      const summary = await summarizeText(messageText);
-      await postToThread(channel, thread_ts, `📋 *Summary:*\n${summary}`);
-    } else if (action?.action_id === "listen") {
-      res.status(200).end();
-      const summary = await summarizeText(messageText);
-      const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
-      await postToThread(channel, thread_ts, `🔊 *Listen to summary:*\n${listenUrl}`);
-    } else {
-      res.status(200).end();
+// api/listen.js — 브라우저 Web Speech API로 TTS 재생
+export default function handler(req, res) {
+  const text = req.query.text || "No text provided.";
+  const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Listening...</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { background: #252545; border-radius: 20px; padding: 40px; max-width: 540px; width: 100%; text-align: center; }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h2 { font-size: 20px; margin-bottom: 16px; color: #a78bfa; }
+    .text-box { background: #1a1a2e; border-radius: 12px; padding: 20px; font-size: 15px; line-height: 1.7; color: #e2e8f0; margin-bottom: 28px; text-align: left; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 32px; border-radius: 50px; border: none; font-size: 16px; font-weight: 600; cursor: pointer; }
+    .btn-play { background: #7c3aed; color: #fff; }
+    .btn-stop { background: #374151; color: #fff; display: none; }
+    .status { margin-top: 16px; font-size: 13px; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🔊</div>
+    <h2>Slack Summary</h2>
+    <div class="text-box">${safeText}</div>
+    <button class="btn btn-play" id="playBtn" onclick="speak()">▶ Play</button>
+    <button class="btn btn-stop" id="stopBtn" onclick="stopSpeak()">■ Stop</button>
+    <p class="status" id="status">Click Play to listen</p>
+  </div>
+  <script>
+    const text = ${JSON.stringify(text)};
+    function speak() {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US"; u.rate = 0.95;
+      u.onstart = () => { document.getElementById("playBtn").style.display="none"; document.getElementById("stopBtn").style.display="inline-flex"; document.getElementById("status").textContent="Playing..."; };
+      u.onend = () => { document.getElementById("playBtn").style.display="inline-flex"; document.getElementById("stopBtn").style.display="none"; document.getElementById("status").textContent="Done!"; };
+      window.speechSynthesis.speak(u);
     }
-    return;
-  }
-
-  // 4) 새 메시지 이벤트 처리
-  const event = body.event;
-  if (!event) return res.status(200).end();
-
-  if (
-    event.type !== "message" ||
-    (event.subtype && event.subtype !== "file_share") ||
-    event.bot_id ||
-    event.user === BOT_USER_ID ||
-    event.channel !== TARGET_CHANNEL
-  ) return res.status(200).end();
-
-  const text = event.text || "";
-  if (!text.trim()) return res.status(200).end();
-
-  // 5) Summary + Listen 버튼 달기
-  await postButtons(event.channel, event.ts, text);
-  return res.status(200).end();
-}
-
-// ─── 버튼 메시지 게시 ────────────────────────────────────
-async function postButtons(channel, thread_ts, originalText) {
-  await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-    },
-    body: JSON.stringify({
-      channel,
-      thread_ts,
-      text: originalText, // fallback text (버튼 액션에서 원문 추출용)
-      blocks: [
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: { type: "plain_text", text: "📋 Summary", emoji: true },
-              action_id: "summarize",
-              style: "primary",
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "🔊 Listen", emoji: true },
-              action_id: "listen",
-            },
-          ],
-        },
-      ],
-    }),
-  });
-}
-
-// ─── Gemini API 요약 ─────────────────────────────────────
-async function summarizeText(text) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Summarize the following Slack message in English in 2-3 concise sentences.
-Return ONLY the summary with no explanation or preamble.
-
-Message: ${text}`,
-          }],
-        }],
-      }),
-    }
-  );
-  const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Summary failed)";
-}
-
-// ─── 스레드에 메시지 게시 ────────────────────────────────
-async function postToThread(channel, thread_ts, text) {
-  await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-    },
-    body: JSON.stringify({ channel, thread_ts, text, unfurl_links: false }),
-  });
-}
-
-// ─── Slack 서명 검증 ─────────────────────────────────────
-function verifySignature(headers, rawBody) {
-  const timestamp = headers["x-slack-request-timestamp"];
-  const signature = headers["x-slack-signature"];
-  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
-  const hmac = crypto
-    .createHmac("sha256", SLACK_SIGNING_SECRET)
-    .update(`v0:${timestamp}:${rawBody}`)
-    .digest("hex");
-  return `v0=${hmac}` === signature;
-}
-
-// ─── Raw body 읽기 ───────────────────────────────────────
-function getRawBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", c => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-    req.on("error", reject);
-  });
+    function stopSpeak() { window.speechSynthesis.cancel(); document.getElementById("playBtn").style.display="inline-flex"; document.getElementById("stopBtn").style.display="none"; document.getElementById("status").textContent="Stopped."; }
+    window.onload = () => setTimeout(speak, 500);
+  </script>
+</body>
+</html>`;
+  res.setHeader("Content-Type", "text/html");
+  res.status(200).send(html);
 }
