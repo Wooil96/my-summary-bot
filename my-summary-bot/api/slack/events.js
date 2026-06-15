@@ -3,7 +3,7 @@ import crypto from "crypto";
 
 const SLACK_BOT_TOKEN      = process.env.SLACK_BOT_TOKEN;
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
-const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY         = process.env.GROQ_API_KEY;
 const BOT_USER_ID          = process.env.BOT_USER_ID;
 const TARGET_CHANNEL       = process.env.TARGET_CHANNEL;
 
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     } else if (action?.action_id === "listen") {
       res.status(200).end();
       const summary = await summarizeText(messageText);
-      const listenUrl = `https://my-summary-bot-chi.vercel.app/listen?text=${encodeURIComponent(summary)}`;
+      const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
       await postToThread(channel, thread_ts, `🔊 *Listen to summary:*\n${listenUrl}`);
     } else {
       res.status(200).end();
@@ -111,27 +111,28 @@ async function postButtons(channel, thread_ts, originalText) {
   });
 }
 
-// ─── Gemini API 요약 ─────────────────────────────────────
+// ─── Groq API 요약 (무료, Vercel에서 안정적) ──────────────
 async function summarizeText(text) {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Summarize the following Slack message in English in 2-3 concise sentences.
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      max_tokens: 500,
+      messages: [{
+        role: "user",
+        content: `Summarize the following Slack message in English in 2-3 concise sentences.
 Return ONLY the summary with no explanation or preamble.
 
 Message: ${text}`,
-          }],
-        }],
-      }),
-    }
-  );
+      }],
+    }),
+  });
   const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Summary failed)";
+  return data.choices?.[0]?.message?.content?.trim() || "(Summary failed)";
 }
 
 // ─── 스레드에 메시지 게시 ────────────────────────────────
