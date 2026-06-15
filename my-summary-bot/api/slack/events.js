@@ -153,7 +153,7 @@ async function summarizeText(text) {
       max_tokens: 500,
       messages: [{
         role: "user",
-        content: `Summarize the following Slack message in English in 2-3 concise sentences.
+        content: `Summarize the following Slack message in English in 3-4 concise sentences.
 Return ONLY the summary with no explanation or preamble.
 
 Message: ${text}`,
