@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     } else if (action?.action_id === "listen") {
       const summary = await summarizeText(messageText);
       const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
-      await postToThread(channel, thread_ts, `🔊 *Listen to summary:*\n${listenUrl}`);
+      await postToThread(channel, thread_ts, `🔊 <${listenUrl}|Listen to Summary>`);
     }
     return res.status(200).end();
   }
