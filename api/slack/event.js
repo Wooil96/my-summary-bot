@@ -3,7 +3,7 @@ import crypto from "crypto";
 
 const SLACK_BOT_TOKEN      = process.env.SLACK_BOT_TOKEN;
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
-const ANTHROPIC_API_KEY    = process.env.ANTHROPIC_API_KEY;
+const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
 const BOT_USER_ID          = process.env.BOT_USER_ID;
 const TARGET_CHANNEL       = process.env.TARGET_CHANNEL;
 
@@ -103,29 +103,27 @@ async function postButtons(channel, thread_ts, originalText) {
   });
 }
 
-// ─── Claude API 요약 ─────────────────────────────────────
+// ─── Gemini API 요약 ─────────────────────────────────────
 async function summarizeText(text) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 500,
-      messages: [{
-        role: "user",
-        content: `Summarize the following Slack message in English in 2-3 concise sentences.
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `Summarize the following Slack message in English in 2-3 concise sentences.
 Return ONLY the summary with no explanation or preamble.
 
 Message: ${text}`,
-      }],
-    }),
-  });
+          }],
+        }],
+      }),
+    }
+  );
   const data = await res.json();
-  return data.content?.[0]?.text?.trim() || "(Summary failed)";
+  return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Summary failed)";
 }
 
 // ─── 스레드에 메시지 게시 ────────────────────────────────
