@@ -40,7 +40,11 @@ export default async function handler(req, res) {
     const action = body.actions?.[0];
     const channel = body.container?.channel_id;
     const thread_ts = body.container?.message_ts;
-    const messageText = body.message?.text || body.message?.blocks?.[0]?.text?.text || "";
+    const responseUrl = body.response_url;
+    const messageText = body.message?.text || "";
+    // 현재 남아있는 버튼 목록 (클릭된 버튼 제외)
+    const currentElements = body.message?.blocks?.find(b => b.type === "actions")?.elements || [];
+    const remaining = currentElements.filter(el => el.action_id !== action?.action_id);
 
     if (action?.action_id === "summarize") {
       const summary = await summarizeText(messageText);
@@ -50,6 +54,9 @@ export default async function handler(req, res) {
       const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
       await postToThread(channel, thread_ts, `🔊 <${listenUrl}|Listen to Summary>`);
     }
+
+    // 누른 버튼만 제거하고 나머지 버튼은 유지
+    await updateButtons(responseUrl, messageText, remaining);
     return res.status(200).end();
   }
 
@@ -103,6 +110,32 @@ async function postButtons(channel, thread_ts, originalText) {
           ],
         },
       ],
+    }),
+  });
+}
+
+// ─── 누른 버튼만 제거하고 메시지 업데이트 ─────────────────
+async function updateButtons(responseUrl, text, remainingElements) {
+  if (!responseUrl) return;
+
+  // 남은 버튼이 없으면 메시지 삭제
+  if (remainingElements.length === 0) {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delete_original: true }),
+    });
+    return;
+  }
+
+  // 남은 버튼만 다시 그리기
+  await fetch(responseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      replace_original: true,
+      text,
+      blocks: [{ type: "actions", elements: remainingElements }],
     }),
   });
 }
