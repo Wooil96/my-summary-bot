@@ -6,6 +6,7 @@ const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
 const GROQ_API_KEY         = process.env.GROQ_API_KEY;
 const BOT_USER_ID          = process.env.BOT_USER_ID;
 const TARGET_CHANNEL       = process.env.TARGET_CHANNEL;
+const MIN_LENGTH           = 400; // 이 길이 이상인 메시지만 자동 요약
 
 export const config = {
   api: { bodyParser: false },
@@ -15,15 +16,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
   const rawBody = await getRawBody(req);
-
-  // Interactivity(버튼 클릭)는 form-urlencoded로 옴 → payload 파라미터 파싱
-  let body;
-  if (rawBody.startsWith("payload=")) {
-    const decoded = decodeURIComponent(rawBody.slice("payload=".length));
-    body = JSON.parse(decoded);
-  } else {
-    body = JSON.parse(rawBody);
-  }
+  const body = JSON.parse(rawBody);
 
   // 1) URL 검증
   if (body.type === "url_verification") {
@@ -35,32 +28,7 @@ export default async function handler(req, res) {
     return res.status(403).send("Invalid signature");
   }
 
-  // 3) 버튼 클릭 (Interactivity) 처리
-  if (body.type === "block_actions") {
-    const action = body.actions?.[0];
-    const channel = body.container?.channel_id;
-    const thread_ts = body.container?.message_ts;
-    const responseUrl = body.response_url;
-    const messageText = body.message?.text || "";
-    // 현재 남아있는 버튼 목록 (클릭된 버튼 제외)
-    const currentElements = body.message?.blocks?.find(b => b.type === "actions")?.elements || [];
-    const remaining = currentElements.filter(el => el.action_id !== action?.action_id);
-
-    if (action?.action_id === "summarize") {
-      const summary = await summarizeText(messageText);
-      await postToThread(channel, thread_ts, `📋 *Summary:*\n${summary}`);
-    } else if (action?.action_id === "listen") {
-      const summary = await summarizeText(messageText);
-      const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
-      await postToThread(channel, thread_ts, `🔊 <${listenUrl}|Listen to Summary>`);
-    }
-
-    // 누른 버튼만 제거하고 나머지 버튼은 유지
-    await updateButtons(responseUrl, messageText, remaining);
-    return res.status(200).end();
-  }
-
-  // 4) 새 메시지 이벤트 처리
+  // 3) 새 메시지 이벤트 처리
   const event = body.event;
   if (!event) return res.status(200).end();
 
@@ -75,93 +43,54 @@ export default async function handler(req, res) {
   const text = event.text || "";
   if (!text.trim()) return res.status(200).end();
 
-  // 5) Summary + Listen 버튼 달기
-  await postButtons(event.channel, event.ts, text);
+  // 400자 이상인 긴 메시지만 자동 요약
+  if (text.length < MIN_LENGTH) return res.status(200).end();
+
+  // 요약 후 스레드에 게시
+  try {
+    const summary = await summarizeText(text);
+    const listenUrl = `https://my-summary-bot-chi.vercel.app/api/listen?text=${encodeURIComponent(summary)}`;
+    await postToThread(
+      event.channel,
+      event.ts,
+      `📋 *Summary:*\n${summary}\n\n🔊 <${listenUrl}|Listen to Summary>`
+    );
+  } catch (err) {
+    console.error("요약 오류:", err);
+  }
   return res.status(200).end();
 }
 
-// ─── 버튼 메시지 게시 ────────────────────────────────────
-async function postButtons(channel, thread_ts, originalText) {
-  await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
-    },
-    body: JSON.stringify({
-      channel,
-      thread_ts,
-      text: originalText, // fallback text (버튼 액션에서 원문 추출용)
-      blocks: [
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: { type: "plain_text", text: "📋 Summary", emoji: true },
-              action_id: "summarize",
-              style: "primary",
-            },
-            {
-              type: "button",
-              text: { type: "plain_text", text: "🔊 Listen", emoji: true },
-              action_id: "listen",
-            },
-          ],
-        },
-      ],
-    }),
-  });
-}
-
-// ─── 누른 버튼만 제거하고 메시지 업데이트 ─────────────────
-async function updateButtons(responseUrl, text, remainingElements) {
-  if (!responseUrl) return;
-
-  // 남은 버튼이 없으면 메시지 삭제
-  if (remainingElements.length === 0) {
-    await fetch(responseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ delete_original: true }),
-    });
-    return;
-  }
-
-  // 남은 버튼만 다시 그리기
-  await fetch(responseUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      replace_original: true,
-      text,
-      blocks: [{ type: "actions", elements: remainingElements }],
-    }),
-  });
-}
-
 // ─── Groq API 요약 (무료, Vercel에서 안정적) ──────────────
-async function summarizeText(text) {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      max_tokens: 500,
-      messages: [{
-        role: "user",
-        content: `Summarize the following Slack message in English in 3-4 concise sentences.
+async function summarizeText(text, retry = true) {
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: `Summarize the following Slack message in English in 3-4 concise sentences.
 Return ONLY the summary with no explanation or preamble.
 
 Message: ${text}`,
-      }],
-    }),
-  });
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() || "(Summary failed)";
+        }],
+      }),
+    });
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || "(Summary failed)";
+  } catch (err) {
+    if (retry) {
+      await new Promise(r => setTimeout(r, 1000)); // 1초 대기 후 재시도
+      return summarizeText(text, false);
+    }
+    return "(Summary failed - please try again)";
+  }
 }
 
 // ─── 스레드에 메시지 게시 ────────────────────────────────
