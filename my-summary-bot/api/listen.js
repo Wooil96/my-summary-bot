@@ -33,13 +33,23 @@ export default function handler(req, res) {
   <script>
     const text = ${JSON.stringify(text)};
     function speak() {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "en-US"; u.rate = 0.95;
-      u.onstart = () => { document.getElementById("playBtn").style.display="none"; document.getElementById("stopBtn").style.display="inline-flex"; document.getElementById("status").textContent="Playing..."; };
-      u.onend = () => { document.getElementById("playBtn").style.display="inline-flex"; document.getElementById("stopBtn").style.display="none"; document.getElementById("status").textContent="Done!"; };
-      window.speechSynthesis.speak(u);
-    }
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US";
+  u.rate = 1.0;
+  u.pitch = 1.0;
+
+  // 더 자연스러운 음성 우선 선택
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = 
+    voices.find(v => v.name.includes("Natural") && v.lang.startsWith("en")) ||  // MS Natural (최고 품질)
+    voices.find(v => v.name === "Google US English") ||                          // Google
+    voices.find(v => v.name.includes("Samantha")) ||                             // Mac
+    voices.find(v => v.lang === "en-US");
+  if (preferred) u.voice = preferred;
+
+  window.speechSynthesis.speak(u);
+}
     function stopSpeak() { window.speechSynthesis.cancel(); document.getElementById("playBtn").style.display="inline-flex"; document.getElementById("stopBtn").style.display="none"; document.getElementById("status").textContent="Stopped."; }
     window.onload = () => setTimeout(speak, 500);
   </script>
