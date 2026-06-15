@@ -15,7 +15,15 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
   const rawBody = await getRawBody(req);
-  const body = JSON.parse(rawBody);
+
+  // Interactivity(버튼 클릭)는 form-urlencoded로 옴 → payload 파라미터 파싱
+  let body;
+  if (rawBody.startsWith("payload=")) {
+    const decoded = decodeURIComponent(rawBody.slice("payload=".length));
+    body = JSON.parse(decoded);
+  } else {
+    body = JSON.parse(rawBody);
+  }
 
   // 1) URL 검증
   if (body.type === "url_verification") {
@@ -41,7 +49,7 @@ export default async function handler(req, res) {
     } else if (action?.action_id === "listen") {
       res.status(200).end();
       const summary = await summarizeText(messageText);
-      const listenUrl = `https://my-slack-bot-mu.vercel.app/listen?text=${encodeURIComponent(summary)}`;
+      const listenUrl = `https://my-summary-bot-chi.vercel.app/listen?text=${encodeURIComponent(summary)}`;
       await postToThread(channel, thread_ts, `🔊 *Listen to summary:*\n${listenUrl}`);
     } else {
       res.status(200).end();
