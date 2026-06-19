@@ -52,12 +52,12 @@ export default async function handler(req, res) {
 
   // 4) 텍스트 브리핑 + 음성 브리핑 따로 생성
   try {
-    // 읽는 용 (전문적인 톤)
+    // 읽는 용 (전문적인 톤) — 스레드에 게시
     const textBriefing = await generateTextBriefing(text);
     await postToThread(
       event.channel,
       event.ts,
-      `🤖 *NGL Spark AI briefing for the announcement above.*\n\n📋 *AI Briefing:*\n${textBriefing}`
+      `📋 *AI Briefing:*\n${textBriefing}`
     );
 
     // 듣는 용 (짧고 깔끔하게) — MP3는 채널 본문에 바로 게시
@@ -202,6 +202,7 @@ async function uploadAudioToSlack(channel, thread_ts, audioBuffer) {
   const completeBody = {
     files: [{ id: file_id, title: "🔊 Audio Briefing" }],
     channel_id: channel,
+    initial_comment: "🤖 *NGL Spark AI briefing for the announcement above.*",
   };
   if (thread_ts) completeBody.thread_ts = thread_ts; // 스레드 지정 시에만 추가
 
