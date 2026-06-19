@@ -54,13 +54,17 @@ export default async function handler(req, res) {
   try {
     // 읽는 용 (전문적인 톤)
     const textBriefing = await generateTextBriefing(text);
-    await postToThread(event.channel, event.ts, `📋 *AI Briefing:*\n${textBriefing}`);
+    await postToThread(
+      event.channel,
+      event.ts,
+      `🤖 *NGL Spark AI briefing for the announcement above.*\n\n📋 *AI Briefing:*\n${textBriefing}`
+    );
 
-    // 듣는 용 (짧고 깔끔하게)
+    // 듣는 용 (짧고 깔끔하게) — MP3는 채널 본문에 바로 게시
     const audioScript = await generateAudioScript(text);
     const audioBuffer = await synthesizeSpeech(audioScript);
     if (audioBuffer) {
-      await uploadAudioToSlack(event.channel, event.ts, audioBuffer);
+      await uploadAudioToSlack(event.channel, null, audioBuffer);
     }
   } catch (err) {
     console.error("처리 오류:", err);
@@ -194,7 +198,13 @@ async function uploadAudioToSlack(channel, thread_ts, audioBuffer) {
     body: audioBuffer,
   });
 
-  // 3단계: 업로드 완료 처리 (스레드에 게시)
+  // 3단계: 업로드 완료 처리
+  const completeBody = {
+    files: [{ id: file_id, title: "🔊 Audio Briefing" }],
+    channel_id: channel,
+  };
+  if (thread_ts) completeBody.thread_ts = thread_ts; // 스레드 지정 시에만 추가
+
   const completeRes = await fetch(
     "https://slack.com/api/files.completeUploadExternal",
     {
@@ -203,11 +213,7 @@ async function uploadAudioToSlack(channel, thread_ts, audioBuffer) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
       },
-      body: JSON.stringify({
-        files: [{ id: file_id, title: "🔊 Audio Briefing" }],
-        channel_id: channel,
-        thread_ts,
-      }),
+      body: JSON.stringify(completeBody),
     }
   );
   const completeData = await completeRes.json();
