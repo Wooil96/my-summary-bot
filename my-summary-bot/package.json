@@ -1,10 +1,8 @@
 {
-    "name": "slack-kr-en-translator",
+    "name": "my-summary-bot",
     "version": "1.0.0",
     "type": "module",
-    "scripts": {
-        "start": "node index.js",
-        "dev": "node --watch index.js"
-    },
-    "dependencies": {}
+    "dependencies": {
+        "google-auth-library": "^9.15.1"
+    }
 }
