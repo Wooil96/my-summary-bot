@@ -41,8 +41,7 @@ export default async function handler(req, res) {
     event.type !== "message" ||
     (event.subtype && event.subtype !== "file_share") ||
     event.bot_id ||
-    event.user === BOT_USER_ID ||
-    event.channel !== TARGET_CHANNEL
+    event.user === BOT_USER_ID
   ) return res.status(200).end();
 
   const text = event.text || "";
