@@ -88,7 +88,7 @@ Announcement: ${text}`,
 async function generateAudioScript(text, retry = true) {
   return callGemini(
     `You are an internal briefing announcer for a logistics company.
-Create a SHORT spoken briefing (2-3 sentences) in clear, natural English that explains what this announcement is about and why it matters.
+Create a spoken briefing (3-4 sentences) in clear, natural English that explains what this announcement is about and why it matters.
 Keep it professional but easy to listen to — not overly casual, no slang. Return ONLY the spoken script. No labels, no markdown.
 
 Announcement: ${text}`,
@@ -142,11 +142,11 @@ async function synthesizeSpeech(text) {
         input: { text },
         voice: {
           languageCode: "en-US",
-          name: "en-US-Chirp3-HD-Aoede", // 자연스러운 Chirp3 HD 음성
+          name: "en-US-Chirp3-HD-Kore", // 부드러운 여성 음성
         },
         audioConfig: {
           audioEncoding: "MP3",
-          speakingRate: 1.0,
+          speakingRate: 1.1, // 살짝 빠르게
         },
       }),
     }
