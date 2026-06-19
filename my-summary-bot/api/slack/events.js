@@ -50,15 +50,15 @@ export default async function handler(req, res) {
   if (!text.trim()) return res.status(200).end();
   if (text.length < MIN_LENGTH) return res.status(200).end();
 
-  // 4) 브리핑 생성 → 텍스트 게시 → 음성 생성 → 업로드
+  // 4) 텍스트 브리핑 + 음성 브리핑 따로 생성
   try {
-    const briefing = await generateBriefing(text);
+    // 읽는 용 (전문적인 톤)
+    const textBriefing = await generateTextBriefing(text);
+    await postToThread(event.channel, event.ts, `📋 *AI Briefing:*\n${textBriefing}`);
 
-    // 브리핑 텍스트를 스레드에 먼저 게시
-    await postToThread(event.channel, event.ts, `📋 *AI Briefing:*\n${briefing}`);
-
-    // 음성(MP3) 생성 후 같은 스레드에 업로드
-    const audioBuffer = await synthesizeSpeech(briefing);
+    // 듣는 용 (짧고 깔끔하게)
+    const audioScript = await generateAudioScript(text);
+    const audioBuffer = await synthesizeSpeech(audioScript);
     if (audioBuffer) {
       await uploadAudioToSlack(event.channel, event.ts, audioBuffer);
     }
@@ -68,8 +68,36 @@ export default async function handler(req, res) {
   return res.status(200).end();
 }
 
-// ─── Gemini로 브리핑 스크립트 생성 ────────────────────────
-async function generateBriefing(text, retry = true) {
+// ─── 읽는 용 브리핑 (전문적인 톤) ─────────────────────────
+async function generateTextBriefing(text, retry = true) {
+  return callGemini(
+    `You are a professional internal communications announcer for a logistics company.
+Read the following Slack announcement and create a SHORT briefing (3-4 sentences) in English that:
+1. Clearly states what the announcement is about
+2. Explains why it matters and who it affects
+3. Is written in clear, professional English
+
+Return ONLY the briefing with no preamble, labels, or markdown.
+
+Announcement: ${text}`,
+    retry
+  );
+}
+
+// ─── 듣는 용 스크립트 (짧고 깔끔, 과하게 캐주얼하지 않게) ──
+async function generateAudioScript(text, retry = true) {
+  return callGemini(
+    `You are an internal briefing announcer for a logistics company.
+Create a SHORT spoken briefing (2-3 sentences) in clear, natural English that explains what this announcement is about and why it matters.
+Keep it professional but easy to listen to — not overly casual, no slang. Return ONLY the spoken script. No labels, no markdown.
+
+Announcement: ${text}`,
+    retry
+  );
+}
+
+// ─── Gemini 공통 호출 함수 ────────────────────────────────
+async function callGemini(prompt, retry = true) {
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -77,39 +105,23 @@ async function generateBriefing(text, retry = true) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `You are a concise internal briefing assistant for a logistics company.
-A long announcement was posted. Create a VERY SHORT spoken briefing (maximum 2 sentences, under 40 words total) that tells employees:
-- What this is about (in plain, casual spoken English)
-- Why they should care or what action is needed
-
-Rules:
-- Do NOT repeat the announcement's wording or tone.
-- Do NOT use formal/corporate phrases like "valuable feedback" or "critical."
-- Write like a colleague quickly explaining it out loud.
-- Return ONLY the spoken script. No labels, no markdown.
-
-Announcement: ${text}`,
-            }],
-          }],
+          contents: [{ parts: [{ text: prompt }] }],
         }),
       }
     );
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Briefing failed)";
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Failed)";
   } catch (err) {
     if (retry) {
       await new Promise(r => setTimeout(r, 1000));
-      return generateBriefing(text, false);
+      return callGemini(prompt, false);
     }
-    return "(Briefing failed - please try again)";
+    return "(Failed - please try again)";
   }
 }
 
 // ─── Google Cloud TTS로 음성 생성 (MP3 Buffer 반환) ───────
 async function synthesizeSpeech(text) {
-  // 서비스 계정으로 액세스 토큰 발급
   const auth = new GoogleAuth({
     credentials: JSON.parse(TTS_CREDENTIALS),
     scopes: ["https://www.googleapis.com/auth/cloud-platform"],
@@ -145,7 +157,6 @@ async function synthesizeSpeech(text) {
     console.error("TTS 응답 오류:", JSON.stringify(data));
     return null;
   }
-  // base64로 인코딩된 오디오를 Buffer로 변환
   return Buffer.from(data.audioContent, "base64");
 }
 
