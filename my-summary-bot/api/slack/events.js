@@ -79,13 +79,16 @@ async function generateBriefing(text, retry = true) {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a professional internal communications announcer for a logistics company.
-Read the following Slack announcement and create a SHORT spoken briefing (3-4 sentences) in English that:
-1. Clearly states what the announcement is about
-2. Explains why it matters and who it affects
-3. Sounds natural when spoken aloud, like a news anchor delivering a quick update
+              text: `You are a concise internal briefing assistant for a logistics company.
+A long announcement was posted. Create a VERY SHORT spoken briefing (maximum 2 sentences, under 40 words total) that tells employees:
+- What this is about (in plain, casual spoken English)
+- Why they should care or what action is needed
 
-Do not just summarize — frame it as a briefing. Return ONLY the spoken script with no preamble, labels, or markdown.
+Rules:
+- Do NOT repeat the announcement's wording or tone.
+- Do NOT use formal/corporate phrases like "valuable feedback" or "critical."
+- Write like a colleague quickly explaining it out loud.
+- Return ONLY the spoken script. No labels, no markdown.
 
 Announcement: ${text}`,
             }],
