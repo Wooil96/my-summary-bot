@@ -3,7 +3,7 @@ import crypto from "crypto";
 
 const SLACK_BOT_TOKEN      = process.env.SLACK_BOT_TOKEN;
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET;
-const GROQ_API_KEY         = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
 const BOT_USER_ID          = process.env.BOT_USER_ID;
 const TARGET_CHANNEL       = process.env.TARGET_CHANNEL;
 const MIN_LENGTH           = 400; // 이 길이 이상인 메시지만 자동 요약
@@ -21,6 +21,11 @@ export default async function handler(req, res) {
   // 1) URL 검증
   if (body.type === "url_verification") {
     return res.status(200).json({ challenge: body.challenge });
+  }
+
+  // Slack 재시도 요청은 무시 (중복 요약 방지)
+  if (req.headers["x-slack-retry-num"]) {
+    return res.status(200).end();
   }
 
   // 2) 서명 검증
@@ -61,32 +66,31 @@ export default async function handler(req, res) {
   return res.status(200).end();
 }
 
-// ─── Groq API 요약 (무료, Vercel에서 안정적) ──────────────
+// ─── Gemini API 요약 ─────────────────────────────────────
 async function summarizeText(text, retry = true) {
   try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: `Summarize the following Slack message in English in 3-4 concise sentences.
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Summarize the following Slack message in English in 3-4 concise sentences.
 Return ONLY the summary with no explanation or preamble.
 
 Message: ${text}`,
-        }],
-      }),
-    });
+            }],
+          }],
+        }),
+      }
+    );
     const data = await res.json();
-    return data.choices?.[0]?.message?.content?.trim() || "(Summary failed)";
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Summary failed)";
   } catch (err) {
     if (retry) {
-      await new Promise(r => setTimeout(r, 1000)); // 1초 대기 후 재시도
+      await new Promise(r => setTimeout(r, 1000));
       return summarizeText(text, false);
     }
     return "(Summary failed - please try again)";
