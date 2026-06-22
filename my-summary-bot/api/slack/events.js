@@ -202,7 +202,7 @@ async function uploadAudioToSlack(channel, thread_ts, audioBuffer) {
   const completeBody = {
     files: [{ id: file_id, title: "🔊 Audio Briefing" }],
     channel_id: channel,
-    initial_comment: "🤖 *NGL Spark AI briefing for the announcement above.*",
+    initial_comment: "⚡ *NGL Spark AI briefing for the announcement above.*",
   };
   if (thread_ts) completeBody.thread_ts = thread_ts; // 스레드 지정 시에만 추가
 
