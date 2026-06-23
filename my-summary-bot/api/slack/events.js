@@ -57,7 +57,7 @@ export default async function handler(req, res) {
     await postToThread(
       event.channel,
       event.ts,
-      `📋 *AI Briefing:*\n${textBriefing}`
+      `✨ *AI Briefing:*\n${textBriefing}`
     );
 
     // 듣는 용 (짧고 깔끔하게) — MP3는 채널 본문에 바로 게시
@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 }
 
 // ─── 읽는 용 브리핑 (전문적인 톤) ─────────────────────────
-async function generateTextBriefing(text, retry = true) {
+async function generateTextBriefing(text) {
   return callGemini(
     `You are a professional internal communications announcer for a logistics company.
 Read the following Slack announcement and create a SHORT briefing (3-4 sentences) in English that:
@@ -83,25 +83,24 @@ Read the following Slack announcement and create a SHORT briefing (3-4 sentences
 
 Return ONLY the briefing with no preamble, labels, or markdown.
 
-Announcement: ${text}`,
-    retry
+Announcement: ${text}`
   );
 }
 
 // ─── 듣는 용 스크립트 (짧고 깔끔, 과하게 캐주얼하지 않게) ──
-async function generateAudioScript(text, retry = true) {
+async function generateAudioScript(text) {
   return callGemini(
     `You are an internal briefing announcer for a logistics company.
 Create a spoken briefing (3-4 sentences) in clear, natural English that explains what this announcement is about and why it matters.
 Keep it professional but easy to listen to — not overly casual, no slang. Return ONLY the spoken script. No labels, no markdown.
 
-Announcement: ${text}`,
-    retry
+Announcement: ${text}`
   );
 }
 
-// ─── Gemini 공통 호출 함수 ────────────────────────────────
-async function callGemini(prompt, retry = true) {
+// ─── Gemini 공통 호출 함수 (503 등 일시적 오류 재시도) ────
+async function callGemini(prompt, attempt = 1) {
+  const MAX_ATTEMPTS = 4;
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -114,11 +113,26 @@ async function callGemini(prompt, retry = true) {
       }
     );
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "(Failed)";
+
+    // 정상 응답이면 반환
+    const result = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (result) return result;
+
+    // 503/429 등 일시적 오류면 잠시 후 재시도
+    const code = data.error?.code;
+    if ((code === 503 || code === 429 || code === 500) && attempt < MAX_ATTEMPTS) {
+      const wait = attempt * 2000; // 2초, 4초, 6초로 점점 길게
+      console.log(`Gemini ${code} - ${attempt}번째 재시도, ${wait}ms 대기`);
+      await new Promise(r => setTimeout(r, wait));
+      return callGemini(prompt, attempt + 1);
+    }
+
+    console.error("Gemini 오류:", JSON.stringify(data));
+    return "(Failed)";
   } catch (err) {
-    if (retry) {
-      await new Promise(r => setTimeout(r, 1000));
-      return callGemini(prompt, false);
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, attempt * 2000));
+      return callGemini(prompt, attempt + 1);
     }
     return "(Failed - please try again)";
   }
@@ -202,7 +216,7 @@ async function uploadAudioToSlack(channel, thread_ts, audioBuffer) {
   const completeBody = {
     files: [{ id: file_id, title: "🔊 Audio Briefing" }],
     channel_id: channel,
-    initial_comment: "⚡ *NGL Spark AI briefing for the announcement above.*",
+    initial_comment: "🤖 *NGL Spark AI briefing for the announcement above.*",
   };
   if (thread_ts) completeBody.thread_ts = thread_ts; // 스레드 지정 시에만 추가
 
